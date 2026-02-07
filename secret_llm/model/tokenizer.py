@@ -27,11 +27,11 @@ class CharTokenizer:
 		if add_bos:
 			ids.append(self.BOS_ID)
 		for ch in text:
-			token_id = (ord(ch) + self.SPECIAL_ID) % self.vocab_size
+			token_id = (ord(ch) + self.SPECIAL_OFFSET) % self.vocab_size
 
 			# 特殊トークンIDの衝突を回避
 			if token_id < self.SPECIAL_OFFSET:
-				token_id = self.SPECIAL_ID
+				token_id = self.SPECIAL_OFFSET
 
 			ids.append(token_id)
 
@@ -51,7 +51,7 @@ class CharTokenizer:
 
 			chars.append(ch)
 
-		return "".json(chars)
+		return "".join(chars)
 
 
 	def encode_batch(self, texts: List[str], max_len: Optional[int] = None, add_bos: bool = True, add_eos: bool = True) -> torch.Tensor:
@@ -61,5 +61,9 @@ class CharTokenizer:
 		if max_len is None:
 			max_len = max(len(e) for e in encoded)
 		batch = torch.full((len(encoded), max_len), self.PAD_ID, dtype=torch.long)
+
+		for i, ids in enumerate(encoded):
+			length = min(len(ids), max_len)
+			batch[i, :length] = torch.tensor(ids[:length], dtype=torch.long)
 
 		return batch

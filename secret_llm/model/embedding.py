@@ -20,7 +20,7 @@ class TokenEmbedding(nn.Module):
 			num_embeddings=config.vocab_size,
 			embedding_dim=config.d_model,
 			  # pad token is always zore vector
-			padding=config.pad_token_id,
+			padding_idx=config.pad_token_id,
 		)
 	
 		# scaling coefficient
@@ -45,7 +45,7 @@ class PositionalEncoding(nn.Module):
 		self.dropout = nn.Dropout(config.dropout)
 
 		pe = torch.zeros(config.max_seq_len, config.d_model)
-		possition = torch.arange(0, config.max_seq_len).unsqueeze(1).float()
+		position = torch.arange(0, config.max_seq_len).unsqueeze(1).float()
 		div_term = torch.exp(
 			torch.arange(0, config.d_model, 2).float() * -(math.log(10000.0) / config.d_model)
 		)
