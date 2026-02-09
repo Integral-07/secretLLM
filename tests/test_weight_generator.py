@@ -76,13 +76,22 @@ class TestBytesToOrthogonal:
 
 class TestGenerateAdapterWeights:
     def test_shapes(self):
-        """W_down: (d_model, rank), W_up: (rank, d_model)。"""
+        """3つの重み: W_down (d_model, rank), W_up (rank, d_model), gate_bias (d_model,)。"""
         km = KeyManager(b"\x01" * 32)
         s = km.derive_session("test")
         wg = WeightGenerator()
-        w_down, w_up = wg.generate_adapter_weights(s, 0, "attn", 128, 16)
+        w_down, w_up, gate_bias = wg.generate_adapter_weights(s, 0, "attn", 128, 16)
         assert w_down.shape == (128, 16)
         assert w_up.shape == (16, 128)
+        assert gate_bias.shape == (128,)
+
+    def test_gate_bias_positive(self):
+        """gate_bias は正の値 (≥ 2.5)。"""
+        km = KeyManager(b"\x01" * 32)
+        s = km.derive_session("test")
+        wg = WeightGenerator()
+        _, _, gate_bias = wg.generate_adapter_weights(s, 0, "attn", 128, 16)
+        assert (gate_bias >= 2.5).all()
 
     def test_deterministic(self):
         """同じ入力 → 同じ重み。"""
@@ -92,8 +101,8 @@ class TestGenerateAdapterWeights:
         s2 = km.derive_session("test")
         w1 = wg.generate_adapter_weights(s1, 0, "attn", 128, 16)
         w2 = wg.generate_adapter_weights(s2, 0, "attn", 128, 16)
-        assert torch.equal(w1[0], w2[0])
-        assert torch.equal(w1[1], w2[1])
+        for i in range(3):
+            assert torch.equal(w1[i], w2[i])
 
 
 class TestGenerateSecretProjections:

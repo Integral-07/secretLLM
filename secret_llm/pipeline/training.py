@@ -1,4 +1,5 @@
 from typing import Optional
+import itertools
 
 import torch
 import torch.nn.functional as F
@@ -151,6 +152,56 @@ class SecretTrainingPipeline:
 			losses.append(avg_loss)
 			print(f"[Secret] Epoch {epoch + 1}/{epochs}  Loss: {avg_loss:.4f}")
 
+		return losses
+
+	def adapt_to_secret(
+		self, text: str, session_id: str, steps: int = 50, lr: float = 1e-4,
+		batch_size: int = 32, seq_len: Optional[int] = None,
+	) -> list[float]:
+		"""新しいセッション秘密への高速適応。
+
+		Phase 2相当だが少ないステップ数で実行する。
+		train_with_secret()でフルfine-tuning済みのモデルから、
+		別のセッションに切り替える際に使う。
+
+		Args:
+			text: 適応用テキスト
+			session_id: 新しいセッションID
+			steps: 適応ステップ数（デフォルト50）
+			lr: 学習率
+			batch_size: バッチサイズ
+			seq_len: 系列長 (Noneならconfig.max_seq_len)
+		Returns:
+			各ステップの損失リスト
+		"""
+		if seq_len is None:
+			seq_len = self.config.max_seq_len
+
+		# 新しい秘密を注入
+		self.model.inject_secrets(self.key_manager, session_id)
+		self.model.train()
+
+		dataset = TextDataset(text, self.tokenizer, seq_len)
+		dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+		optimizer = torch.optim.AdamW(
+			[p for p in self.model.parameters() if p.requires_grad], lr=lr,
+		)
+
+		losses = []
+		for x, y in itertools.islice(itertools.cycle(dataloader), steps):
+			mask = self._create_causal_mask(x.size(1))
+			logits = self.model(x, mask=mask)
+			loss = F.cross_entropy(
+				logits.view(-1, logits.size(-1)), y.view(-1),
+				ignore_index=self.tokenizer.PAD_ID,
+			)
+			optimizer.zero_grad()
+			loss.backward()
+			optimizer.step()
+			losses.append(loss.item())
+
+		print(f"[Adapt] {steps} steps  loss: {losses[0]:.4f} → {losses[-1]:.4f}")
 		return losses
 
 	def save_public_weights(self, path: str):

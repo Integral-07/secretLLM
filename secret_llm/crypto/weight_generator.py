@@ -56,13 +56,16 @@ class WeightGenerator:
 	def generate_adapter_weights(
 		self, session_keys: SessionKeySet, layer_idx: int,
 		position: str, d_model: int, rank: int,
-	) -> tuple[torch.Tensor, torch.Tensor]:
-		"""1つのSecretAdapter用の W_down, W_up を生成する。
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		"""1つのSecretGatingAdapter用の重みとゲートバイアスを生成する。
 
 		Args:
 			position: "attn" または "ffn"
 		Returns:
-			(W_down: (d_model, rank), W_up: (rank, d_model))
+			(W_down, W_up, gate_bias)
+			  W_down: (d_model, rank)
+			  W_up: (rank, d_model)
+			  gate_bias: (d_model,) — 正の値 (ゲート開放用)
 		"""
 		raw_down = session_keys.derive_component_bytes(
 			layer_idx, f"adapter_{position}_down", 8,
@@ -70,11 +73,21 @@ class WeightGenerator:
 		raw_up = session_keys.derive_component_bytes(
 			layer_idx, f"adapter_{position}_up", 8,
 		)
+		raw_bias = session_keys.derive_component_bytes(
+			layer_idx, f"adapter_{position}_gate_bias", 8,
+		)
 
 		w_down = self.bytes_to_tensor(raw_down, (d_model, rank))
 		w_up = self.bytes_to_tensor(raw_up, (rank, d_model))
 
-		return w_down, w_up
+		# gate_bias: 正の値に生成 (sigmoid(gate_bias) ≈ 1 になるように)
+		# PRNG生成 → abs() + 2.5 で [2.5, ~5.0] の範囲にシフト
+		seed = int.from_bytes(raw_bias[:8], "big")
+		gen = torch.Generator()
+		gen.manual_seed(seed)
+		gate_bias = torch.randn(d_model, generator=gen).abs() + 2.5
+
+		return w_down, w_up, gate_bias
 
 	def generate_secret_projections(
 		self, session_keys: SessionKeySet, layer_idx: int,

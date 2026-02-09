@@ -6,6 +6,7 @@ import torch.nn as nn
 from .config import TransformerConfig
 from .embedding import TokenEmbedding, PositionalEncoding
 from .transformer_block import SecretTransformerBlock
+from .secret_adapter import SecretGatingAdapter
 from ..crypto.key_manager import KeyManager
 from ..crypto.weight_generator import WeightGenerator
 
@@ -22,10 +23,11 @@ class SecretTransformer(nn.Module):
 
 	秘密パラメータ (HKDF派生・固定):
 	  - 各層の S_q, S_k (秘密射影行列)
-	  - 各層の Adapter W_down, W_up (Attention後 + FFN後)
+	  - 各層の SecretGatingAdapter W_down, W_up, gate_bias (Attention後 + FFN後)
 
 	inject_secrets() で秘密を注入、clear_secrets() でリセット。
-	秘密未注入時は標準Transformerと同一動作。
+	秘密未注入時 (Phase 1) は gate_bias=+5 で標準Transformerとほぼ同一動作。
+	clear_secrets() 後は gate_bias=-5 で信号遮断。
 	"""
 
 	def __init__(self, config: TransformerConfig):
@@ -79,33 +81,43 @@ class SecretTransformer(nn.Module):
 			)
 			layer.attention.set_secret_projections(s_q, s_k)
 
-			# Attention後Adapterの秘密重みを注入
-			w_down_attn, w_up_attn = weight_gen.generate_adapter_weights(
+			# Attention後Adapterの秘密重みを注入 (W_down, W_up, gate_bias)
+			wd_attn, wu_attn, gb_attn = weight_gen.generate_adapter_weights(
 				session_keys, i, "attn", self.config.d_model, self.config.adapter_rank,
 			)
-			layer.adapter_attn.set_secret_weights(w_down_attn, w_up_attn)
+			layer.adapter_attn.set_secret_weights(wd_attn, wu_attn, gb_attn)
 
-			# FFN後Adapterの秘密重みを注入
-			w_down_ffn, w_up_ffn = weight_gen.generate_adapter_weights(
+			# FFN後Adapterの秘密重みを注入 (W_down, W_up, gate_bias)
+			wd_ffn, wu_ffn, gb_ffn = weight_gen.generate_adapter_weights(
 				session_keys, i, "ffn", self.config.d_model, self.config.adapter_rank,
 			)
-			layer.adapter_ffn.set_secret_weights(w_down_ffn, w_up_ffn)
+			layer.adapter_ffn.set_secret_weights(wd_ffn, wu_ffn, gb_ffn)
 
 	def clear_secrets(self):
-		"""全秘密重みをリセットし、標準Transformerに戻す。
+		"""全秘密重みをリセット。
 
 		S_q, S_k → 単位行列 (秘密射影なし)
-		Adapter W_down, W_up → ゼロ (パススルー)
+		Adapter W_down, W_up → ゼロ, gate_bias → GATE_CLOSED (-5)
+		→ gate = sigmoid(-5) ≈ 0.007 → 信号遮断
 		"""
+		d_model = self.config.d_model
+		rank = self.config.adapter_rank
+
 		for layer in self.layers:
 			n_heads, d_head = self.config.n_heads, self.config.d_head
 			identity = torch.eye(d_head).unsqueeze(0).expand(n_heads, -1, -1).clone()
 			layer.attention.set_secret_projections(identity, identity.clone())
 
-			zeros_down = torch.zeros(self.config.d_model, self.config.adapter_rank)
-			zeros_up = torch.zeros(self.config.adapter_rank, self.config.d_model)
-			layer.adapter_attn.set_secret_weights(zeros_down, zeros_up)
-			layer.adapter_ffn.set_secret_weights(zeros_down.clone(), zeros_up.clone())
+			layer.adapter_attn.set_secret_weights(
+				torch.zeros(d_model, rank),
+				torch.zeros(rank, d_model),
+				torch.full((d_model,), SecretGatingAdapter.GATE_CLOSED),
+			)
+			layer.adapter_ffn.set_secret_weights(
+				torch.zeros(d_model, rank),
+				torch.zeros(rank, d_model),
+				torch.full((d_model,), SecretGatingAdapter.GATE_CLOSED),
+			)
 
 	def count_parameters(self) -> tuple[int, int]:
 		"""公開パラメータ数と秘密パラメータ数を返す。"""

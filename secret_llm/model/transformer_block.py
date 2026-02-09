@@ -34,9 +34,11 @@ class SecretTransformerBlock(nn.Module):
 		self.ffn = PositionwiseFeedForward(config)
 		self.adapter_attn = SecretAdapter(
 			config.d_model, config.adapter_rank, config.adapter_nonlinearity,
+			scale=config.adapter_scale,
 		)
 		self.adapter_ffn = SecretAdapter(
 			config.d_model, config.adapter_rank, config.adapter_nonlinearity,
+			scale=config.adapter_scale,
 		)
 		self.dropout = nn.Dropout(config.dropout)
 

@@ -62,8 +62,11 @@ class TestSecretTransformer:
         assert torch.allclose(model.layers[0].attention.S_q, eye)
         assert torch.allclose(model.layers[0].attention.S_k, eye)
 
-        zeros = torch.zeros(128, 16)
-        assert torch.allclose(model.layers[0].adapter_attn.W_down, zeros)
+        # SecretGatingAdapter: W_down, W_up がゼロ、gate_bias が GATE_CLOSED (-5)
+        adapter = model.layers[0].adapter_attn
+        assert torch.allclose(adapter.W_down, torch.zeros(128, 16))
+        assert torch.allclose(adapter.W_up, torch.zeros(16, 128))
+        assert torch.allclose(adapter.gate_bias, torch.full((128,), -5.0))
 
     def test_different_sessions_different_logits(self, model, key_manager, token_ids, mask):
         """異なるセッション → 異なるlogits。"""

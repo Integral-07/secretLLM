@@ -17,6 +17,7 @@ class TransformerConfig:
 	# Secret adapter
 	adapter_rank: int = 16
 	adapter_nonlinearity: str = "gelu"
+	adapter_scale: float = 0.5
 
 	# Secret projection
 	secret_proj_rank: int = 32

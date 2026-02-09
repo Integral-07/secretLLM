@@ -1,7 +1,8 @@
-"""セッションローテーションデモ。
+"""セッションローテーション + 高速適応デモ。
 
 同じ入力に対し異なるセッションの内部表現を比較し、
 秘匿が機能していること (cosine similarity ≈ 0) を確認する。
+さらに adapt_to_secret() による適応速度を可視化する。
 
 実行: python3 -m examples.demo_session_rotation
 """
@@ -17,6 +18,7 @@ from secret_llm.model.transformer import SecretTransformer
 from secret_llm.model.tokenizer import CharTokenizer
 from secret_llm.crypto.key_manager import KeyManager
 from secret_llm.pipeline.inference import SecretInferencePipeline
+from secret_llm.pipeline.training import SecretTrainingPipeline
 
 
 def cosine_sim(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -137,6 +139,40 @@ def main():
     sim_logits = cosine_sim(logits_1, logits_2)
     print(f"  logits:  {sim_logits:.6f}")
     print("  (should be exactly 1.000000)")
+
+    # --- 5. 高速適応デモ ---
+    print("\n--- 5. Fast Adaptation Speed ---")
+    print("   (adapt_to_secret() で新セッションに切り替えた際の損失推移)")
+
+    train_text = (
+        "the cat sat on the mat. "
+        "the dog sat on the log. "
+        "the bird flew over the tree. "
+    ) * 50
+
+    train_pipeline = SecretTrainingPipeline(config, master_secret, sessions[0])
+
+    # ベース学習 (軽量)
+    print("  Base training (5 epochs)...")
+    train_pipeline.train_base(train_text, epochs=5, lr=3e-4, batch_size=32, seq_len=64)
+
+    # Session A で秘密学習
+    print("  Secret fine-tuning on Session A (5 epochs)...")
+    train_pipeline.train_with_secret(train_text, epochs=5, lr=1e-4, batch_size=32, seq_len=64)
+
+    # Session B に高速適応
+    print(f"  Adapting to Session B ({sessions[1]})...")
+    adapt_losses = train_pipeline.adapt_to_secret(
+        train_text, session_id=sessions[1], steps=50, lr=1e-4, batch_size=32, seq_len=64,
+    )
+
+    # 適応カーブ表示 (10ステップごと)
+    print("\n  Adaptation curve (every 10 steps):")
+    for i in range(0, len(adapt_losses), 10):
+        bar_len = int(adapt_losses[i] * 10)
+        bar = "#" * min(bar_len, 50)
+        print(f"    step {i:>3}: {adapt_losses[i]:.4f} {bar}")
+    print(f"    step {len(adapt_losses) - 1:>3}: {adapt_losses[-1]:.4f}")
 
 
 if __name__ == "__main__":
